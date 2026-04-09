@@ -11,22 +11,25 @@ import type { DocTreeNodeResponse } from '../../src/types/index.js';
  */
 export class GetDocumentContentHandler extends BaseToolHandler<{ document_id: string; offset?: number; limit?: number }, string> {
   readonly name = 'get_document_content';
-  readonly description = 'Read the markdown content of a note in SiYuan. Returns the full note content in markdown format, with optional pagination support';
+  readonly description =
+  'Read markdown content of a note document, with optional line pagination. ' +
+  'Use only when block, section, or tree tools are not sufficient. ' +
+  'Prefer local or section-based tools for large documents to reduce token usage.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
       document_id: {
         type: 'string',
-        description: 'The note document ID (block ID)',
+        description: 'Target note document ID. Use when operating on a full note rather than a specific block.',
       },
       offset: {
         type: 'number',
-        description: 'Starting line number (0-based index). Default is 0 (start from beginning)',
+        description: 'Starting line number, 0-based. Use for partial reads to reduce token usage. Default: 0.',
         default: 0,
       },
       limit: {
         type: 'number',
-        description: 'Number of lines to return. If not specified, returns all lines from offset to end',
+        description: 'Maximum number of lines to return. Omit to read from offset to the end.',
       },
     },
     required: ['document_id'],
@@ -67,7 +70,9 @@ export class CreateDocumentHandler extends BaseToolHandler<
   string
 > {
   readonly name = 'create_document';
-  readonly description = 'Create a new note document in a SiYuan notebook with markdown content';
+  readonly description =
+  'Create a new note document in a SiYuan notebook with markdown content. ' +
+  'Use when creating a new note, not when updating an existing one.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -100,7 +105,10 @@ export class AppendToDocumentHandler extends BaseToolHandler<
   string
 > {
   readonly name = 'append_to_document';
-  readonly description = 'Append markdown content to the end of an existing note in SiYuan';
+  readonly description =
+  'Append markdown content to the end of an existing note document. ' +
+  'Use only when appending at full-document level is intended. ' +
+  'Prefer block append tools when targeting a specific section or subtree.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -129,7 +137,10 @@ export class UpdateDocumentHandler extends BaseToolHandler<
   { success: boolean; document_id: string }
 > {
   readonly name = 'update_document';
-  readonly description = 'Replace the entire content of a note in SiYuan with new markdown content (overwrites existing content)';
+  readonly description =
+  'Replace the entire content of a note document with new markdown content. ' +
+  'Use only when a full note rewrite is intended. ' +
+  'Prefer block-level or range-level editing tools for localized changes.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -171,8 +182,9 @@ export class ReplaceTextInBlockHandler extends BaseToolHandler<
   readonly name = 'replace_text_in_block';
 
   readonly description =
-    'Replace text inside a single SiYuan block. This is more token-efficient and safer than rewriting the full document.';
-
+  'Replace text inside a single SiYuan block. ' +
+  'Use for localized edits when the target block is already known. ' +
+  'Prefer this over rewriting the full document because it is safer and more token-efficient.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -254,8 +266,9 @@ export class ReplaceTextInBlockStrictHandler extends BaseToolHandler<
   readonly name = 'replace_text_in_block_strict';
 
   readonly description =
-    'Strictly replace text in a single block. Use only when the exact existing text is already known. Fails if no unique strict match is found.';
-
+  'Strictly replace text inside a single block using exact match and optional surrounding context. ' +
+  'Use when the exact existing text is already known and accidental edits must be avoided. ' +
+  'Fails when no unique strict match is found.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -348,8 +361,9 @@ export class GetBlockHandler extends BaseToolHandler<
   readonly name = 'get_block';
 
   readonly description =
-    'Get raw information for a single SiYuan block by block ID.';
-
+  'Get raw data for a single SiYuan block by block ID. ' +
+  'Use when an exact block is already known and raw metadata or content is needed. ' +
+  'Prefer local navigation tools for exploration.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -379,8 +393,9 @@ export class GetChildBlocksHandler extends BaseToolHandler<
   readonly name = 'get_child_blocks';
 
   readonly description =
-    'Get direct child blocks of a SiYuan block. Useful for local tree traversal.';
-
+  'Get direct child blocks of a SiYuan block. ' +
+  'Use for local navigation within a known subtree. ' +
+  'Prefer this over broader tree or document reads when only immediate children are needed.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -422,8 +437,8 @@ export class GetBlockContextHandler extends BaseToolHandler<
   readonly name = 'get_block_context';
 
   readonly description =
-    'Get a SiYuan block with surrounding context (parents, siblings, children) for precise editing without loading a whole document.';
-
+  'Get compact local context around a known block, including nearby parents, siblings, and children. ' +
+  'Use this before broader section or document reads to understand local structure with low token usage.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -498,8 +513,10 @@ export class SearchBlocksHandler extends BaseToolHandler<
   readonly name = 'search_blocks';
 
   readonly description =
-    'Search blocks across the whole SiYuan document tree and return compact low-token matches.';
-
+  'Search blocks globally and return compact low-token matches. ' +
+  'Use when the target block is unknown and subtree scope is not known. ' +
+  'Prefer scoped search when a root_id or parent_id is already known. ' +
+  'Returns compact snippets and block metadata, not full content.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -620,8 +637,9 @@ export class AppendBlockHandler extends BaseToolHandler<
   readonly name = 'append_block';
 
   readonly description =
-    'Append a child block to a parent block.';
-
+  'Append a new child block under a parent block. ' +
+  'Use when the target parent is already known and duplicate creation is not a concern. ' +
+  'Prefer append_block_if_missing for retry-safe appends.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -728,8 +746,8 @@ export class MoveBlockHandler extends BaseToolHandler<
   readonly name = 'move_block';
 
   readonly description =
-    'Move a block to a new location.';
-
+  'Move a block relative to another block or parent location. ' +
+  'Use for structural reorganization when the involved block IDs are already known.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -947,8 +965,9 @@ export class ApplyOperationsHandler extends BaseToolHandler<
   readonly name = 'apply_operations';
 
   readonly description =
-    'Apply multiple block operations in one tool call.';
-
+  'Apply multiple block edit or structural operations in one call. ' +
+  'Use when several related changes should succeed together with lower token overhead. ' +
+  'Prefer this over many separate mutation calls when editing the same local area.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -1127,8 +1146,9 @@ export class GetBlockTreeSliceHandler extends BaseToolHandler<
   readonly name = 'get_block_tree_slice';
 
   readonly description =
-    'Get a compact subtree slice starting from a block. Useful for navigating the local document tree before editing.';
-
+  'Get a bounded subtree slice starting from a known block. ' +
+  'Use when structure matters more than full content. ' +
+  'Prefer this over broad document reads when navigating deep hierarchies.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -1166,8 +1186,9 @@ export class FindHeadingInTreeHandler extends BaseToolHandler<
   readonly name = 'find_heading_in_tree';
 
   readonly description =
-    'Find heading-like blocks by text inside a local subtree. Useful before loading a section.';
-
+  'Find a heading within a known document or block tree. ' +
+  'Use when the document is known but the exact section block is not. ' +
+  'Prefer this before reading large documents or broad block ranges.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -1213,8 +1234,9 @@ export class GetSectionByHeadingHandler extends BaseToolHandler<
   readonly name = 'get_section_by_heading';
 
   readonly description =
-    'Get the section under a heading within a local subtree. Returns the heading block and following section blocks until the next sibling heading of same or higher level.';
-
+  'Get the content under a heading within a known tree or document. ' +
+  'Use to read only the relevant section of a large note. ' +
+  'Prefer this over full document reads when the target heading is known.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -1307,41 +1329,73 @@ async function buildBlockPath(context: ExecutionContext, block: any, stopId?: st
  * Retry-safe append: only append if matching child block does not already exist
  */
 export class AppendBlockIfMissingHandler extends BaseToolHandler<
-  { parent_id: string; content: string; exact_match?: boolean; dry_run?: boolean },
   {
+    parent_id: string;
+    content: string;
+    exact_match?: boolean;
+    dry_run?: boolean;
+  },
+  {
+    success: boolean;
     created: boolean;
     block_id?: string;
     message: string;
     error_code?: 'BLOCK_NOT_FOUND' | 'ALREADY_EXISTS';
-    dry_run?: boolean;
   }
 > {
   readonly name = 'append_block_if_missing';
-  readonly description = 'Append a child block only if matching content is not already present under the parent block.';
+
+  readonly description =
+    'Append a new child block only if matching content is not already present under the parent block. ' +
+    'Use for retry-safe appends, logs, and repeated automation runs where duplicate content must be avoided. ' +
+    'Returns ALREADY_EXISTS instead of creating a duplicate block.';
+
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
-      parent_id: { type: 'string', description: 'Parent block ID' },
-      content: { type: 'string', description: 'Markdown content for the child block' },
-      exact_match: { type: 'boolean', description: 'If true, require exact normalized match. Default: true', default: true },
-      dry_run: { type: 'boolean', description: 'If true, only report whether append would happen. Default: false', default: false },
+      parent_id: {
+        type: 'string',
+        description: 'Parent block ID. The new child block will be appended here.',
+      },
+      content: {
+        type: 'string',
+        description: 'Markdown content for the child block to append.',
+      },
+      exact_match: {
+        type: 'boolean',
+        description:
+          'If true, require normalized exact match against existing direct child content. Default: true.',
+        default: true,
+      },
+      dry_run: {
+        type: 'boolean',
+        description:
+          'If true, report whether a new block would be created without changing content. Default: false.',
+        default: false,
+      },
     },
     required: ['parent_id', 'content'],
   };
 
   async execute(
-    args: { parent_id: string; content: string; exact_match?: boolean; dry_run?: boolean },
+    args: {
+      parent_id: string;
+      content: string;
+      exact_match?: boolean;
+      dry_run?: boolean;
+    },
     context: ExecutionContext
   ): Promise<{
+    success: boolean;
     created: boolean;
     block_id?: string;
     message: string;
     error_code?: 'BLOCK_NOT_FOUND' | 'ALREADY_EXISTS';
-    dry_run?: boolean;
   }> {
     const parent = await context.siyuan.block.getBlock(args.parent_id);
     if (!parent) {
       return {
+        success: false,
         created: false,
         message: `Parent block not found: ${args.parent_id}`,
         error_code: 'BLOCK_NOT_FOUND',
@@ -1355,6 +1409,7 @@ export class AppendBlockIfMissingHandler extends BaseToolHandler<
 
     if (existing) {
       return {
+        success: true,
         created: false,
         block_id: existing.id,
         message: 'Matching child block already exists',
@@ -1364,77 +1419,144 @@ export class AppendBlockIfMissingHandler extends BaseToolHandler<
 
     if (args.dry_run ?? false) {
       return {
+        success: true,
         created: false,
-        dry_run: true,
         message: 'No matching child block found; append would create a new block',
       };
     }
 
     const block_id = await context.siyuan.block.appendBlock(args.parent_id, args.content);
+
     return {
+      success: true,
       created: true,
       block_id,
       message: 'Block appended',
     };
   }
 }
-
 /**
  * Scoped block search: subtree search when root_id or parent_id is provided, global otherwise
  */
 export class SearchBlocksScopedHandler extends BaseToolHandler<
-  { query: string; root_id?: string; parent_id?: string; limit?: number },
-  Array<{
-    id: string;
-    content_snippet: string;
+  {
+    query: string;
+    root_id?: string;
     parent_id?: string;
-    path?: string;
-  }>
+    limit?: number;
+  },
+  {
+    success: boolean;
+    scope_used: 'global' | 'subtree';
+    items: Array<{
+      id: string;
+      content_snippet: string;
+      parent_id?: string;
+      path?: string;
+    }>;
+    count: number;
+    message: string;
+  }
 > {
   readonly name = 'search_blocks_scoped';
-  readonly description = 'Search blocks globally or restrict search to a subtree under root_id or parent_id.';
+
+  readonly description =
+    'Search blocks within a known subtree, or fall back to global search if no scope is provided. ' +
+    'Use this instead of global search when root_id or parent_id is already known to reduce noise and token usage. ' +
+    'Returns compact matches with snippets and path information when available.';
+
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
-      query: { type: 'string', description: 'Search query' },
-      root_id: { type: 'string', description: 'Restrict search to this root block subtree' },
-      parent_id: { type: 'string', description: 'Restrict search to this parent block subtree' },
-      limit: { type: 'number', description: 'Maximum number of results', default: 10 },
+      query: {
+        type: 'string',
+        description: 'Search text to match against block content.',
+      },
+      root_id: {
+        type: 'string',
+        description: 'Restrict search to this subtree root. Mutually exclusive with parent_id.',
+      },
+      parent_id: {
+        type: 'string',
+        description: 'Restrict search to this parent subtree. Mutually exclusive with root_id.',
+      },
+      limit: {
+        type: 'number',
+        description:
+          'Maximum number of matches to return. Keep small for lower token usage. Default: 10.',
+        default: 10,
+      },
     },
     required: ['query'],
   };
 
+  validate(args: any): args is {
+    query: string;
+    root_id?: string;
+    parent_id?: string;
+    limit?: number;
+  } {
+    super.validate(args);
+    this.forbidTogether(args, ['root_id', 'parent_id']);
+    if (args.limit !== undefined) {
+      this.getNumberInRange(args.limit, 'limit', { min: 1, max: 100 });
+    }
+    return true;
+  }
+
   async execute(
-    args: { query: string; root_id?: string; parent_id?: string; limit?: number },
+    args: {
+      query: string;
+      root_id?: string;
+      parent_id?: string;
+      limit?: number;
+    },
     context: ExecutionContext
-  ): Promise<Array<{ id: string; content_snippet: string; parent_id?: string; path?: string }>> {
+  ): Promise<{
+    success: boolean;
+    scope_used: 'global' | 'subtree';
+    items: Array<{
+      id: string;
+      content_snippet: string;
+      parent_id?: string;
+      path?: string;
+    }>;
+    count: number;
+    message: string;
+  }> {
     const limit = args.limit ?? 10;
     const scopeId = args.root_id ?? args.parent_id;
 
-    if (args.root_id && args.parent_id) {
-      throw new Error('search_blocks_scoped: provide either root_id or parent_id, not both');
-    }
-
     if (!scopeId) {
       const results = await context.siyuan.block.searchBlocks(args.query, limit);
-      return (results ?? []).slice(0, limit).map((b: any) => ({
+      const items = (results ?? []).slice(0, limit).map((b: any) => ({
         id: b.block_id ?? b.id,
         content_snippet: b.snippet ?? makeSnippet(blockText(b), args.query),
         parent_id: b.parent_id,
         path: b.hpath,
       }));
+
+      return {
+        success: true,
+        scope_used: 'global',
+        items,
+        count: items.length,
+        message: `Found ${items.length} matching block(s) using global search`,
+      };
     }
 
     const scope = await context.siyuan.block.getBlock(scopeId);
     if (!scope) {
-      throw new Error(`search_blocks_scoped: scope block not found: ${scopeId}`);
+      this.fail('BLOCK_NOT_FOUND', `Scope block not found: ${scopeId}`);
     }
 
     const query = norm(args.query).toLowerCase();
     const subtree = await collectSubtreeBlocks(context, scopeId);
-    const matched = subtree.filter((b: any) => blockText(b).toLowerCase().includes(query)).slice(0, limit);
+    const matched = subtree
+      .filter((b: any) => blockText(b).toLowerCase().includes(query))
+      .slice(0, limit);
 
-    return await Promise.all(
+    const items = await Promise.all(
       matched.map(async (b: any) => ({
         id: b.id,
         content_snippet: makeSnippet(blockText(b), args.query),
@@ -1442,5 +1564,13 @@ export class SearchBlocksScopedHandler extends BaseToolHandler<
         path: await buildBlockPath(context, b, scopeId),
       }))
     );
+
+    return {
+      success: true,
+      scope_used: 'subtree',
+      items,
+      count: items.length,
+      message: `Found ${items.length} matching block(s) within scoped subtree`,
+    };
   }
 }
