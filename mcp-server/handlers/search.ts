@@ -92,13 +92,13 @@ export class UnifiedSearchHandler extends BaseToolHandler<
     },
     context: ExecutionContext
   ): Promise<SearchResultResponse[]> {
-    return await context.siyuan.search({
-      k: args.content,
+    return await context.siyuan.search.search({
+      content: args.content,
       tag: args.tag,
-      title: args.filename,
+      filename: args.filename,
+      limit: args.limit ?? 10,
       notebook: args.notebook_id,
       types: args.types,
-      limit: args.limit ?? 10,
     });
   }
 }
