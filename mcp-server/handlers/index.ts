@@ -27,9 +27,29 @@ import {
   CreateDocumentHandler,
   AppendToDocumentHandler,
   UpdateDocumentHandler,
+  ReplaceTextInBlockHandler,
+  ReplaceTextInBlockStrictHandler,
   AppendToDailyNoteHandler,
   MoveDocumentsHandler,
   GetDocumentTreeHandler,
+  GetBlockContextHandler,
+  GetBlockHandler,
+  GetChildBlocksHandler,
+  SearchBlocksHandler,
+  InsertBlockBeforeHandler,
+  InsertBlockAfterHandler,
+  AppendBlockHandler,
+  PrependBlockHandler,
+  DeleteBlockHandler,
+  MoveBlockHandler,
+  ReplaceRangeInBlockHandler,
+  GetBlockAttributesHandler,
+  SetBlockAttributesHandler,
+  UpdateBlockAttributeHandler,
+  ApplyOperationsHandler,
+  GetBlockTreeSliceHandler,
+  FindHeadingInTreeHandler,
+  GetSectionByHeadingHandler,
 } from './document.js';
 import {
   ListNotebooksHandler,
@@ -57,6 +77,35 @@ export function createAllHandlers() {
     new CreateDocumentHandler(),
     new AppendToDocumentHandler(),
     new UpdateDocumentHandler(),
+      
+    new ReplaceTextInBlockHandler(),
+    new ReplaceTextInBlockStrictHandler(),
+      
+    new GetBlockHandler(),
+    new GetChildBlocksHandler(),
+    new GetBlockContextHandler(),
+    new GetBlockTreeSliceHandler(),
+    new FindHeadingInTreeHandler(),
+    new GetSectionByHeadingHandler(),
+      
+    new SearchBlocksHandler(),
+      
+    new InsertBlockBeforeHandler(),
+    new InsertBlockAfterHandler(),
+    new AppendBlockHandler(),
+    new PrependBlockHandler(),
+      
+    new DeleteBlockHandler(),
+    new MoveBlockHandler(),
+      
+    new ReplaceRangeInBlockHandler(),
+      
+    new GetBlockAttributesHandler(),
+    new SetBlockAttributesHandler(),
+    new UpdateBlockAttributeHandler(),
+      
+    new ApplyOperationsHandler(),
+      
     new AppendToDailyNoteHandler(),
     new MoveDocumentsHandler(),
     new GetDocumentTreeHandler(),
