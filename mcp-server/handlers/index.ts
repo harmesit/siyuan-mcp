@@ -50,6 +50,8 @@ import {
   GetBlockTreeSliceHandler,
   FindHeadingInTreeHandler,
   GetSectionByHeadingHandler,
+  AppendBlockIfMissingHandler,
+  SearchBlocksScopedHandler,
 } from './document.js';
 import {
   ListNotebooksHandler,
@@ -114,6 +116,8 @@ export function createAllHandlers() {
     new ListNotebooksHandler(),
     new GetRecentlyUpdatedDocumentsHandler(),
     new CreateNotebookHandler(),
+    new AppendBlockIfMissingHandler(),
+    new SearchBlocksScopedHandler(),
 
     // 快照
     new CreateSnapshotHandler(),

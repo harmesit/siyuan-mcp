@@ -1243,3 +1243,204 @@ export class GetSectionByHeadingHandler extends BaseToolHandler<
     );
   }
 }
+function blockText(block: any): string {
+  return String(
+    block?.content ??
+    block?.markdown ??
+    block?.fcontent ??
+    block?.name ??
+    ''
+  ).trim();
+}
+
+function norm(s: string): string {
+  return String(s ?? '').replace(/\r\n/g, '\n').trim();
+}
+
+function matchesBlock(block: any, content: string, exact = true): boolean {
+  const a = blockText(block);
+  const b = norm(content);
+  if (!a || !b) return false;
+  return exact ? norm(a) === b : norm(a).includes(b);
+}
+
+function makeSnippet(text: string, query: string, max = 160): string {
+  const t = norm(text);
+  if (!t) return '';
+  const q = norm(query).toLowerCase();
+  const i = t.toLowerCase().indexOf(q);
+  if (i < 0) return t.length <= max ? t : `${t.slice(0, max - 3)}...`;
+  const start = Math.max(0, i - Math.floor(max / 3));
+  const end = Math.min(t.length, start + max);
+  return `${start > 0 ? '...' : ''}${t.slice(start, end)}${end < t.length ? '...' : ''}`;
+}
+
+async function collectSubtreeBlocks(context: ExecutionContext, rootId: string): Promise<any[]> {
+  const root = await context.siyuan.block.getBlock(rootId);
+  if (!root) return [];
+  const out: any[] = [];
+  const queue: any[] = [root];
+  while (queue.length) {
+    const cur = queue.shift();
+    out.push(cur);
+    const children = await context.siyuan.block.getChildBlocks(cur.id);
+    if (Array.isArray(children) && children.length) queue.push(...children);
+  }
+  return out;
+}
+
+async function buildBlockPath(context: ExecutionContext, block: any, stopId?: string): Promise<string | undefined> {
+  const parts: string[] = [];
+  let cur: any = block;
+  let depth = 0;
+  while (cur?.id && depth < 32) {
+    const t = blockText(cur);
+    parts.unshift(t ? (t.length > 48 ? `${t.slice(0, 45)}...` : t) : cur.id);
+    if (!cur.parent_id || cur.id === stopId || cur.parent_id === stopId) break;
+    cur = await context.siyuan.block.getBlock(cur.parent_id);
+    depth++;
+  }
+  return parts.length ? parts.join(' / ') : undefined;
+}
+
+/**
+ * Retry-safe append: only append if matching child block does not already exist
+ */
+export class AppendBlockIfMissingHandler extends BaseToolHandler<
+  { parent_id: string; content: string; exact_match?: boolean; dry_run?: boolean },
+  {
+    created: boolean;
+    block_id?: string;
+    message: string;
+    error_code?: 'BLOCK_NOT_FOUND' | 'ALREADY_EXISTS';
+    dry_run?: boolean;
+  }
+> {
+  readonly name = 'append_block_if_missing';
+  readonly description = 'Append a child block only if matching content is not already present under the parent block.';
+  readonly inputSchema: JSONSchema = {
+    type: 'object',
+    properties: {
+      parent_id: { type: 'string', description: 'Parent block ID' },
+      content: { type: 'string', description: 'Markdown content for the child block' },
+      exact_match: { type: 'boolean', description: 'If true, require exact normalized match. Default: true', default: true },
+      dry_run: { type: 'boolean', description: 'If true, only report whether append would happen. Default: false', default: false },
+    },
+    required: ['parent_id', 'content'],
+  };
+
+  async execute(
+    args: { parent_id: string; content: string; exact_match?: boolean; dry_run?: boolean },
+    context: ExecutionContext
+  ): Promise<{
+    created: boolean;
+    block_id?: string;
+    message: string;
+    error_code?: 'BLOCK_NOT_FOUND' | 'ALREADY_EXISTS';
+    dry_run?: boolean;
+  }> {
+    const parent = await context.siyuan.block.getBlock(args.parent_id);
+    if (!parent) {
+      return {
+        created: false,
+        message: `Parent block not found: ${args.parent_id}`,
+        error_code: 'BLOCK_NOT_FOUND',
+      };
+    }
+
+    const children = await context.siyuan.block.getChildBlocks(args.parent_id);
+    const existing = Array.isArray(children)
+      ? children.find((b: any) => matchesBlock(b, args.content, args.exact_match ?? true))
+      : undefined;
+
+    if (existing) {
+      return {
+        created: false,
+        block_id: existing.id,
+        message: 'Matching child block already exists',
+        error_code: 'ALREADY_EXISTS',
+      };
+    }
+
+    if (args.dry_run ?? false) {
+      return {
+        created: false,
+        dry_run: true,
+        message: 'No matching child block found; append would create a new block',
+      };
+    }
+
+    const block_id = await context.siyuan.block.appendBlock(args.parent_id, args.content);
+    return {
+      created: true,
+      block_id,
+      message: 'Block appended',
+    };
+  }
+}
+
+/**
+ * Scoped block search: subtree search when root_id or parent_id is provided, global otherwise
+ */
+export class SearchBlocksScopedHandler extends BaseToolHandler<
+  { query: string; root_id?: string; parent_id?: string; limit?: number },
+  Array<{
+    id: string;
+    content_snippet: string;
+    parent_id?: string;
+    path?: string;
+  }>
+> {
+  readonly name = 'search_blocks_scoped';
+  readonly description = 'Search blocks globally or restrict search to a subtree under root_id or parent_id.';
+  readonly inputSchema: JSONSchema = {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Search query' },
+      root_id: { type: 'string', description: 'Restrict search to this root block subtree' },
+      parent_id: { type: 'string', description: 'Restrict search to this parent block subtree' },
+      limit: { type: 'number', description: 'Maximum number of results', default: 10 },
+    },
+    required: ['query'],
+  };
+
+  async execute(
+    args: { query: string; root_id?: string; parent_id?: string; limit?: number },
+    context: ExecutionContext
+  ): Promise<Array<{ id: string; content_snippet: string; parent_id?: string; path?: string }>> {
+    const limit = args.limit ?? 10;
+    const scopeId = args.root_id ?? args.parent_id;
+
+    if (args.root_id && args.parent_id) {
+      throw new Error('search_blocks_scoped: provide either root_id or parent_id, not both');
+    }
+
+    if (!scopeId) {
+      const results = await context.siyuan.block.searchBlocks(args.query, limit);
+      return (results ?? []).slice(0, limit).map((b: any) => ({
+        id: b.block_id ?? b.id,
+        content_snippet: b.snippet ?? makeSnippet(blockText(b), args.query),
+        parent_id: b.parent_id,
+        path: b.hpath,
+      }));
+    }
+
+    const scope = await context.siyuan.block.getBlock(scopeId);
+    if (!scope) {
+      throw new Error(`search_blocks_scoped: scope block not found: ${scopeId}`);
+    }
+
+    const query = norm(args.query).toLowerCase();
+    const subtree = await collectSubtreeBlocks(context, scopeId);
+    const matched = subtree.filter((b: any) => blockText(b).toLowerCase().includes(query)).slice(0, limit);
+
+    return await Promise.all(
+      matched.map(async (b: any) => ({
+        id: b.id,
+        content_snippet: makeSnippet(blockText(b), args.query),
+        parent_id: b.parent_id,
+        path: await buildBlockPath(context, b, scopeId),
+      }))
+    );
+  }
+}
