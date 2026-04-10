@@ -9,12 +9,15 @@ import type { DocTreeNodeResponse } from '../../src/types/index.js';
 /**
  * 获取文档内容
  */
-export class GetDocumentContentHandler extends BaseToolHandler<{ document_id: string; offset?: number; limit?: number }, string> {
+export class GetDocumentContentHandler extends BaseToolHandler<
+  { document_id: string; offset?: number; limit?: number; max_chars?: number },
+  string
+> {
   readonly name = 'get_document_content';
   readonly description =
-  'Read markdown content of a note document, with optional line pagination. ' +
-  'Use only when block, section, or tree tools are not sufficient. ' +
-  'Prefer local or section-based tools for large documents to reduce token usage.';
+    'Read markdown content of a note document, with optional line pagination. ' +
+    'Use only when block, section, or tree tools are not sufficient. ' +
+    'Prefer local or section-based tools for large documents to reduce token usage.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -31,6 +34,10 @@ export class GetDocumentContentHandler extends BaseToolHandler<{ document_id: st
         type: 'number',
         description: 'Maximum number of lines to return. Omit to read from offset to the end.',
       },
+      max_chars: {
+        type: 'number',
+        description: 'Optional maximum number of characters to return after line selection.',
+      },
     },
     required: ['document_id'],
   };
@@ -42,7 +49,10 @@ export class GetDocumentContentHandler extends BaseToolHandler<{ document_id: st
 
     if (args.offset === undefined && args.limit === undefined) {
       const metaInfo = `--- Document Info ---\nTotal Lines: ${totalLines}\n--- End Info ---\n\n`;
-      return metaInfo + fullContent;
+      const body = typeof args.max_chars === 'number' && args.max_chars > 0
+        ? fullContent.slice(0, args.max_chars)
+        : fullContent;
+      return metaInfo + body;
     }
 
     const offset = args.offset ?? 0;
@@ -57,7 +67,10 @@ export class GetDocumentContentHandler extends BaseToolHandler<{ document_id: st
 
     const metaInfo = `--- Document Info ---\nTotal Lines: ${totalLines}\nCurrent Range: ${startLine}-${actualEndLine - 1} (showing ${actualEndLine - startLine} lines)\n--- End Info ---\n\n`;
 
-    const selectedContent = lines.slice(startLine, actualEndLine).join('\n');
+    let selectedContent = lines.slice(startLine, actualEndLine).join('\n');
+    if (typeof args.max_chars === 'number' && args.max_chars > 0) {
+      selectedContent = selectedContent.slice(0, args.max_chars);
+    }
     return metaInfo + selectedContent;
   }
 }
@@ -355,15 +368,15 @@ export class ReplaceTextInBlockStrictHandler extends BaseToolHandler<
  * 获取单个块信息
  */
 export class GetBlockHandler extends BaseToolHandler<
-  { block_id: string },
+  { block_id: string; brief?: boolean; max_chars?: number },
   any
 > {
   readonly name = 'get_block';
 
   readonly description =
-  'Get raw data for a single SiYuan block by block ID. ' +
-  'Use when an exact block is already known and raw metadata or content is needed. ' +
-  'Prefer local navigation tools for exploration.';
+    'Get raw data for a single SiYuan block by block ID. ' +
+    'Use when an exact block is already known and raw metadata or content is needed. ' +
+    'Prefer local navigation tools for exploration.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -371,15 +384,30 @@ export class GetBlockHandler extends BaseToolHandler<
         type: 'string',
         description: 'Target block ID',
       },
+      brief: {
+        type: 'boolean',
+        description: 'If true, return a compact summary instead of the full block payload.',
+        default: false,
+      },
+      max_chars: {
+        type: 'number',
+        description: 'Maximum characters to include in brief content snippets. Default: 160.',
+        default: 160,
+      },
     },
     required: ['block_id'],
   };
 
   async execute(
-    args: { block_id: string },
+    args: { block_id: string; brief?: boolean; max_chars?: number },
     context: ExecutionContext
   ): Promise<any> {
-    return context.siyuan.block.getBlock(args.block_id);
+    const raw = await context.siyuan.block.getBlock(args.block_id);
+    const block = unwrapBlock(raw) ?? raw;
+    if (args.brief ?? false) {
+      return briefBlock(block, args.max_chars ?? 160);
+    }
+    return block;
   }
 }
 
@@ -387,15 +415,15 @@ export class GetBlockHandler extends BaseToolHandler<
  * 获取直接子块
  */
 export class GetChildBlocksHandler extends BaseToolHandler<
-  { block_id: string },
+  { block_id: string; limit?: number; brief?: boolean; max_chars?: number },
   any[]
 > {
   readonly name = 'get_child_blocks';
 
   readonly description =
-  'Get direct child blocks of a SiYuan block. ' +
-  'Use for local navigation within a known subtree. ' +
-  'Prefer this over broader tree or document reads when only immediate children are needed.';
+    'Get direct child blocks of a SiYuan block. ' +
+    'Use for local navigation within a known subtree. ' +
+    'Prefer this over broader tree or document reads when only immediate children are needed.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -403,15 +431,35 @@ export class GetChildBlocksHandler extends BaseToolHandler<
         type: 'string',
         description: 'Parent block ID',
       },
+      limit: {
+        type: 'number',
+        description: 'Maximum number of direct children to return.',
+        default: 50,
+      },
+      brief: {
+        type: 'boolean',
+        description: 'If true, return compact child summaries instead of full child payloads.',
+        default: false,
+      },
+      max_chars: {
+        type: 'number',
+        description: 'Maximum characters to include per child block in brief mode. Default: 120.',
+        default: 120,
+      },
     },
     required: ['block_id'],
   };
 
   async execute(
-    args: { block_id: string },
+    args: { block_id: string; limit?: number; brief?: boolean; max_chars?: number },
     context: ExecutionContext
   ): Promise<any[]> {
-    return context.siyuan.block.getChildBlocks(args.block_id);
+    const raw = await context.siyuan.block.getChildBlocks(args.block_id);
+    const blocks = unwrapBlocks(raw).slice(0, args.limit ?? 50);
+    if (args.brief ?? false) {
+      return blocks.map((block) => briefBlock(block, args.max_chars ?? 120));
+    }
+    return blocks;
   }
 }
 
@@ -425,6 +473,8 @@ export class GetBlockContextHandler extends BaseToolHandler<
     siblings_before?: number;
     siblings_after?: number;
     children?: number;
+    brief?: boolean;
+    max_chars_per_block?: number;
   },
   {
     target: any;
@@ -437,8 +487,8 @@ export class GetBlockContextHandler extends BaseToolHandler<
   readonly name = 'get_block_context';
 
   readonly description =
-  'Get compact local context around a known block, including nearby parents, siblings, and children. ' +
-  'Use this before broader section or document reads to understand local structure with low token usage.';
+    'Get compact local context around a known block, including nearby parents, siblings, and children. ' +
+    'Use this before broader section or document reads to understand local structure with low token usage.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -466,6 +516,16 @@ export class GetBlockContextHandler extends BaseToolHandler<
         description: 'How many direct child blocks to include',
         default: 2,
       },
+      brief: {
+        type: 'boolean',
+        description: 'If true, return compact summaries for all blocks in the context.',
+        default: false,
+      },
+      max_chars_per_block: {
+        type: 'number',
+        description: 'Maximum characters to include per block when brief is true. Default: 120.',
+        default: 120,
+      },
     },
     required: ['block_id'],
   };
@@ -477,6 +537,8 @@ export class GetBlockContextHandler extends BaseToolHandler<
       siblings_before?: number;
       siblings_after?: number;
       children?: number;
+      brief?: boolean;
+      max_chars_per_block?: number;
     },
     context: ExecutionContext
   ): Promise<{
@@ -486,12 +548,25 @@ export class GetBlockContextHandler extends BaseToolHandler<
     siblings_after: any[];
     children: any[];
   }> {
-    return context.siyuan.block.getBlockContext(args.block_id, {
+    const result = await context.siyuan.block.getBlockContext(args.block_id, {
       parents: args.parents,
       siblingsBefore: args.siblings_before,
       siblingsAfter: args.siblings_after,
       children: args.children,
     });
+
+    if (!(args.brief ?? false)) {
+      return result;
+    }
+
+    const maxChars = args.max_chars_per_block ?? 120;
+    return {
+      target: briefBlock(result?.target, maxChars),
+      parents: Array.isArray(result?.parents) ? result.parents.map((b: any) => briefBlock(b, maxChars)) : [],
+      siblings_before: Array.isArray(result?.siblings_before) ? result.siblings_before.map((b: any) => briefBlock(b, maxChars)) : [],
+      siblings_after: Array.isArray(result?.siblings_after) ? result.siblings_after.map((b: any) => briefBlock(b, maxChars)) : [],
+      children: Array.isArray(result?.children) ? result.children.map((b: any) => briefBlock(b, maxChars)) : [],
+    };
   }
 }
 
@@ -1140,15 +1215,15 @@ export class GetDocumentTreeHandler extends BaseToolHandler<
  * Get a compact subtree slice for one block
  */
 export class GetBlockTreeSliceHandler extends BaseToolHandler<
-  { block_id: string; depth?: number },
+  { block_id: string; depth?: number; brief?: boolean; max_blocks?: number; max_chars_per_block?: number },
   any
 > {
   readonly name = 'get_block_tree_slice';
 
   readonly description =
-  'Get a bounded subtree slice starting from a known block. ' +
-  'Use when structure matters more than full content. ' +
-  'Prefer this over broad document reads when navigating deep hierarchies.';
+    'Get a bounded subtree slice starting from a known block. ' +
+    'Use when structure matters more than full content. ' +
+    'Prefer this over broad document reads when navigating deep hierarchies.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -1161,18 +1236,40 @@ export class GetBlockTreeSliceHandler extends BaseToolHandler<
         description: 'How many child levels to include',
         default: 2,
       },
+      brief: {
+        type: 'boolean',
+        description: 'If true, return a compact version of the tree slice.',
+        default: false,
+      },
+      max_blocks: {
+        type: 'number',
+        description: 'Maximum number of nodes to keep in the returned tree when brief is true. Default: 50.',
+        default: 50,
+      },
+      max_chars_per_block: {
+        type: 'number',
+        description: 'Maximum characters to include per node when brief is true. Default: 120.',
+        default: 120,
+      },
     },
     required: ['block_id'],
   };
 
   async execute(
-    args: { block_id: string; depth?: number },
+    args: { block_id: string; depth?: number; brief?: boolean; max_blocks?: number; max_chars_per_block?: number },
     context: ExecutionContext
   ): Promise<any> {
-    return context.siyuan.block.getBlockTreeSlice(
+    const tree = await context.siyuan.block.getBlockTreeSlice(
       args.block_id,
       args.depth ?? 2
     );
+    if (!(args.brief ?? false)) {
+      return tree;
+    }
+    return compactTreeSlice(tree, {
+      maxBlocks: args.max_blocks ?? 50,
+      maxCharsPerBlock: args.max_chars_per_block ?? 120,
+    });
   }
 }
 
@@ -1225,7 +1322,7 @@ export class FindHeadingInTreeHandler extends BaseToolHandler<
  * Get section blocks starting from a heading
  */
 export class GetSectionByHeadingHandler extends BaseToolHandler<
-  { block_id: string; heading_query: string },
+  { block_id: string; heading_query: string; brief?: boolean; max_blocks?: number; max_chars_per_block?: number },
   {
     heading: any;
     section_blocks: any[];
@@ -1234,9 +1331,9 @@ export class GetSectionByHeadingHandler extends BaseToolHandler<
   readonly name = 'get_section_by_heading';
 
   readonly description =
-  'Get the content under a heading within a known tree or document. ' +
-  'Use to read only the relevant section of a large note. ' +
-  'Prefer this over full document reads when the target heading is known.';
+    'Get the content under a heading within a known tree or document. ' +
+    'Use to read only the relevant section of a large note. ' +
+    'Prefer this over full document reads when the target heading is known.';
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -1248,23 +1345,53 @@ export class GetSectionByHeadingHandler extends BaseToolHandler<
         type: 'string',
         description: 'Heading text to match',
       },
+      brief: {
+        type: 'boolean',
+        description: 'If true, return compact block summaries for the section.',
+        default: false,
+      },
+      max_blocks: {
+        type: 'number',
+        description: 'Maximum number of section blocks to return. Default: 25.',
+        default: 25,
+      },
+      max_chars_per_block: {
+        type: 'number',
+        description: 'Maximum characters to include per block in brief mode. Default: 160.',
+        default: 160,
+      },
     },
     required: ['block_id', 'heading_query'],
   };
 
   async execute(
-    args: { block_id: string; heading_query: string },
+    args: { block_id: string; heading_query: string; brief?: boolean; max_blocks?: number; max_chars_per_block?: number },
     context: ExecutionContext
   ): Promise<{
     heading: any;
     section_blocks: any[];
   }> {
-    return context.siyuan.block.getSectionByHeading(
+    const result = await context.siyuan.block.getSectionByHeading(
       args.block_id,
       args.heading_query
     );
+    if (!(args.brief ?? false)) {
+      return {
+        heading: unwrapBlock(result?.heading) ?? result?.heading,
+        section_blocks: Array.isArray(result?.section_blocks) ? result.section_blocks.slice(0, args.max_blocks ?? 25) : [],
+      };
+    }
+    const maxChars = args.max_chars_per_block ?? 160;
+    return {
+      heading: briefBlock(result?.heading, maxChars),
+      section_blocks: Array.isArray(result?.section_blocks)
+        ? result.section_blocks.slice(0, args.max_blocks ?? 25).map((b: any) => briefBlock(b, maxChars))
+        : [],
+    };
   }
 }
+
+
 
 function unwrapBlock(value: any): any | null {
   if (!value) return null;
@@ -1305,37 +1432,191 @@ function unwrapBlocks(value: any): any[] {
 
 function blockText(block: any): string {
   const b = unwrapBlock(block) ?? block;
-
   return String(
     b?.content ??
     b?.markdown ??
     b?.fcontent ??
     b?.name ??
     b?.text ??
+    b?.title ??
     ''
   ).trim();
 }
 
-function norm(s: string): string {
-  return String(s ?? '').replace(/\r\n/g, '\n').trim();
+function norm(value: string): string {
+  return String(value ?? '').replace(/\r\n/g, '\n').trim();
 }
 
 function matchesBlock(block: any, content: string, exact = true): boolean {
-  const a = blockText(block);
-  const b = norm(content);
-  if (!a || !b) return false;
-  return exact ? norm(a) === b : norm(a).includes(b);
+  const haystack = norm(blockText(block));
+  const needle = norm(content);
+  if (!haystack || !needle) return false;
+  return exact ? haystack === needle : haystack.includes(needle);
 }
 
 function makeSnippet(text: string, query: string, max = 160): string {
-  const t = norm(text);
-  if (!t) return '';
-  const q = norm(query).toLowerCase();
-  const i = t.toLowerCase().indexOf(q);
-  if (i < 0) return t.length <= max ? t : `${t.slice(0, max - 3)}...`;
-  const start = Math.max(0, i - Math.floor(max / 3));
-  const end = Math.min(t.length, start + max);
-  return `${start > 0 ? '...' : ''}${t.slice(start, end)}${end < t.length ? '...' : ''}`;
+  const source = norm(text);
+  if (!source) return '';
+  const needle = norm(query).toLowerCase();
+  const idx = source.toLowerCase().indexOf(needle);
+  if (idx < 0) return source.length <= max ? source : `${source.slice(0, max - 3)}...`;
+  const start = Math.max(0, idx - Math.floor(max / 3));
+  const end = Math.min(source.length, start + max);
+  return `${start > 0 ? '...' : ''}${source.slice(start, end)}${end < source.length ? '...' : ''}`;
+}
+
+function truncateText(value: string, maxChars = 160): string {
+  const text = norm(value);
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
+function getChildArray(node: any): any[] {
+  if (!node || typeof node !== 'object') return [];
+  if (Array.isArray(node.children)) return node.children;
+  if (Array.isArray(node.blocks)) return node.blocks;
+  if (Array.isArray(node.items)) return node.items;
+  return [];
+}
+
+function briefBlock(block: any, maxChars = 160): any {
+  const b = unwrapBlock(block) ?? block ?? {};
+  return {
+    id: b.id,
+    type: b.type,
+    parent_id: b.parent_id,
+    root_id: b.root_id,
+    content_snippet: truncateText(blockText(b), maxChars),
+    has_children: getChildArray(b).length > 0 || b.has_children === true,
+  };
+}
+
+function compactTreeSlice(root: any, options: { maxBlocks: number; maxCharsPerBlock: number }): any {
+  const { maxBlocks, maxCharsPerBlock } = options;
+  let seen = 0;
+
+  function walk(node: any): any {
+    if (!node || seen >= maxBlocks) return null;
+    seen += 1;
+    const base = briefBlock(node, maxCharsPerBlock);
+    const children = getChildArray(node)
+      .map((child) => walk(child))
+      .filter((child) => child !== null);
+    return {
+      ...base,
+      children,
+    };
+  }
+
+  return walk(root);
+}
+
+function collectNodes(node: any, out: any[] = []): any[] {
+  if (!node) return out;
+  out.push(node);
+  for (const child of getChildArray(node)) {
+    collectNodes(child, out);
+  }
+  return out;
+}
+
+function parseMarkdownHeadings(
+  markdown: string,
+  maxHeadings = 200,
+  maxDepth = 6
+): Array<{ id?: string; text: string; level: number; parent_id?: string }> {
+  const items: Array<{ id?: string; text: string; level: number; parent_id?: string }> = [];
+
+  for (const line of markdown.split('\n')) {
+    const match = /^(#{1,6})\s+(.*)$/.exec(line.trim());
+    if (!match) continue;
+
+    const level = match[1].length;
+    if (level > maxDepth) continue;
+
+    items.push({ text: match[2].trim(), level });
+    if (items.length >= maxHeadings) break;
+  }
+
+  return items;
+}
+
+async function resolveScopedSearchItems(
+  context: ExecutionContext,
+  query: string,
+  options: { root_id?: string; parent_id?: string; limit: number }
+): Promise<{
+  scope_used: 'global' | 'subtree';
+  items: Array<{ id: string; content_snippet: string; parent_id?: string; path?: string }>;
+  candidates_scanned: number;
+  matched_before_limit: number;
+}> {
+  const scopeId = options.root_id ?? options.parent_id;
+  if (!scopeId) {
+    const results = await context.siyuan.block.searchBlocks(query, options.limit);
+    const items = (results ?? []).slice(0, options.limit).map((raw: any) => ({
+      id: raw.block_id,
+      content_snippet: raw.snippet ?? makeSnippet(blockText(raw), query),
+      parent_id: raw.parent_id,
+      path: raw.hpath,
+    }));
+    return {
+      scope_used: 'global',
+      items,
+      candidates_scanned: items.length,
+      matched_before_limit: items.length,
+    };
+  }
+
+  const candidateLimit = Math.max(options.limit * 10, 50);
+  const results = await context.siyuan.block.searchBlocks(query, candidateLimit);
+  const matched: Array<{ id: string; content_snippet: string; parent_id?: string; path?: string }> = [];
+
+  for (const raw of results ?? []) {
+    if (matched.length >= options.limit) break;
+    const blockId = raw.block_id;
+    if (!blockId) continue;
+
+    if (blockId === scopeId || raw.parent_id === scopeId || raw.root_id === scopeId) {
+      matched.push({
+        id: blockId,
+        content_snippet: raw.snippet ?? makeSnippet(blockText(raw), query),
+        parent_id: raw.parent_id,
+        path: raw.hpath,
+      });
+      continue;
+    }
+
+    try {
+      const ctx = await context.siyuan.block.getBlockContext(blockId, {
+        parents: 20,
+        siblingsBefore: 0,
+        siblingsAfter: 0,
+        children: 0,
+      });
+      const parents = Array.isArray(ctx?.parents) ? ctx.parents : [];
+      const parentIds = parents
+        .map((p: any) => unwrapBlock(p))
+        .filter((p: any) => !!p?.id)
+        .map((p: any) => p.id);
+      if (parentIds.includes(scopeId)) {
+        matched.push({
+          id: blockId,
+          content_snippet: raw.snippet ?? makeSnippet(blockText(raw), query),
+          parent_id: raw.parent_id,
+          path: raw.hpath,
+        });
+      }
+    } catch {
+    }
+  }
+
+  return {
+    scope_used: 'subtree',
+    items: matched,
+    candidates_scanned: (results ?? []).length,
+    matched_before_limit: matched.length,
+  };
 }
 
 /**
@@ -1437,7 +1718,6 @@ export class AppendBlockIfMissingHandler extends BaseToolHandler<
     }
 
     const block_id = await context.siyuan.block.appendBlock(args.parent_id, args.content);
-
     return {
       success: true,
       created: true,
@@ -1448,7 +1728,7 @@ export class AppendBlockIfMissingHandler extends BaseToolHandler<
 }
 
 /**
- * Scoped block search: subtree search when root_id or parent_id is provided, global otherwise
+ * Scoped block search with optional debug output
  */
 export class SearchBlocksScopedHandler extends BaseToolHandler<
   {
@@ -1456,6 +1736,7 @@ export class SearchBlocksScopedHandler extends BaseToolHandler<
     root_id?: string;
     parent_id?: string;
     limit?: number;
+    debug?: boolean;
   },
   {
     success: boolean;
@@ -1468,6 +1749,11 @@ export class SearchBlocksScopedHandler extends BaseToolHandler<
     }>;
     count: number;
     message: string;
+    debug?: {
+      scope_id?: string;
+      candidates_scanned: number;
+      matched_before_limit: number;
+    };
   }
 > {
   readonly name = 'search_blocks_scoped';
@@ -1476,6 +1762,7 @@ export class SearchBlocksScopedHandler extends BaseToolHandler<
     'Search blocks globally, or narrow results using a known scope block when root_id or parent_id is provided. ' +
     'Use this when a likely scope block is known and you want fewer, more relevant matches. ' +
     'Returns compact matches with snippets and path information when available.';
+
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -1485,28 +1772,27 @@ export class SearchBlocksScopedHandler extends BaseToolHandler<
       },
       root_id: {
         type: 'string',
-        description: 'Restrict search to this subtree root BLOCK ID only. Mutually exclusive with parent_id.',
+        description: 'Preferred scope BLOCK ID used to narrow search results. Mutually exclusive with parent_id.',
       },
       parent_id: {
         type: 'string',
-        description: 'Restrict search to this parent BLOCK ID only. Mutually exclusive with root_id.',
+        description: 'Preferred parent BLOCK ID used to narrow search results. Mutually exclusive with root_id.',
       },
       limit: {
         type: 'number',
-        description:
-          'Maximum number of matches to return. Keep small for lower token usage. Default: 10.',
+        description: 'Maximum number of matches to return. Keep small for lower token usage. Default: 10.',
         default: 10,
+      },
+      debug: {
+        type: 'boolean',
+        description: 'If true, include lightweight debugging metadata about the scoped filter run.',
+        default: false,
       },
     },
     required: ['query'],
   };
 
-  validate(args: any): args is {
-    query: string;
-    root_id?: string;
-    parent_id?: string;
-    limit?: number;
-  } {
+  validate(args: any): args is { query: string; root_id?: string; parent_id?: string; limit?: number; debug?: boolean } {
     super.validate(args);
     this.forbidTogether(args, ['root_id', 'parent_id']);
     if (args.limit !== undefined) {
@@ -1516,113 +1802,504 @@ export class SearchBlocksScopedHandler extends BaseToolHandler<
   }
 
   async execute(
-    args: {
-      query: string;
-      root_id?: string;
-      parent_id?: string;
-      limit?: number;
-    },
+    args: { query: string; root_id?: string; parent_id?: string; limit?: number; debug?: boolean },
     context: ExecutionContext
   ): Promise<{
     success: boolean;
     scope_used: 'global' | 'subtree';
-    items: Array<{
-      id: string;
-      content_snippet: string;
-      parent_id?: string;
-      path?: string;
-    }>;
+    items: Array<{ id: string; content_snippet: string; parent_id?: string; path?: string }>;
     count: number;
     message: string;
+    debug?: { scope_id?: string; candidates_scanned: number; matched_before_limit: number };
   }> {
-    const limit = args.limit ?? 10;
-    const scopeId = args.root_id ?? args.parent_id;
+    const resolved = await resolveScopedSearchItems(context, args.query, {
+      root_id: args.root_id,
+      parent_id: args.parent_id,
+      limit: args.limit ?? 10,
+    });
 
-    // No scope -> regular global search
-    if (!scopeId) {
-      const results = await context.siyuan.block.searchBlocks(args.query, limit);
-      const items = (results ?? []).slice(0, limit).map((b: any) => ({
-        id: b.block_id ?? b.id,
-        content_snippet: b.snippet ?? makeSnippet(blockText(b), args.query),
-        parent_id: b.parent_id,
-        path: b.hpath,
-      }));
+    return {
+      success: true,
+      scope_used: resolved.scope_used,
+      items: resolved.items,
+      count: resolved.items.length,
+      message:
+        resolved.scope_used === 'global'
+          ? `Found ${resolved.items.length} matching block(s) using global search`
+          : `Found ${resolved.items.length} matching block(s) within scoped subtree`,
+      ...(args.debug
+        ? {
+            debug: {
+              scope_id: args.root_id ?? args.parent_id,
+              candidates_scanned: resolved.candidates_scanned,
+              matched_before_limit: resolved.matched_before_limit,
+            },
+          }
+        : {}),
+    };
+  }
+}
 
+/**
+ * Get a compact brief view of one block
+ */
+export class GetBlockBriefHandler extends BaseToolHandler<
+  { block_id: string; max_chars?: number },
+  { success: boolean; item: any; message: string }
+> {
+  readonly name = 'get_block_brief';
+  readonly description =
+    'Get a compact summary of a single block. Use this for quick inspection before broader reads or edits.';
+  readonly inputSchema: JSONSchema = {
+    type: 'object',
+    properties: {
+      block_id: {
+        type: 'string',
+        description: 'Target block ID.',
+      },
+      max_chars: {
+        type: 'number',
+        description: 'Maximum characters to include in the content snippet. Default: 160.',
+        default: 160,
+      },
+    },
+    required: ['block_id'],
+  };
+
+  async execute(
+    args: { block_id: string; max_chars?: number },
+    context: ExecutionContext
+  ): Promise<{ success: boolean; item: any; message: string }> {
+    const block = unwrapBlock(await context.siyuan.block.getBlock(args.block_id));
+    if (!block) {
+      return {
+        success: false,
+        item: null,
+        message: `Block not found: ${args.block_id}`,
+      };
+    }
+    return {
+      success: true,
+      item: briefBlock(block, args.max_chars ?? 160),
+      message: 'Block summary retrieved',
+    };
+  }
+}
+
+/**
+ * List child docs or blocks in compact form
+ */
+export class ListChildrenBriefHandler extends BaseToolHandler<
+  { block_id?: string; document_id?: string; limit?: number; max_chars?: number },
+  { success: boolean; items: any[]; count: number; message: string }
+> {
+  readonly name = 'list_children_brief';
+  readonly description =
+    'List direct child blocks or child documents in compact form. Use this for low-token navigation in deep trees.';
+  readonly inputSchema: JSONSchema = {
+    type: 'object',
+    properties: {
+      block_id: {
+        type: 'string',
+        description: 'Parent block ID for block-level child listing.',
+      },
+      document_id: {
+        type: 'string',
+        description: 'Parent document ID for document-level child listing.',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum number of child items to return. Default: 50.',
+        default: 50,
+      },
+      max_chars: {
+        type: 'number',
+        description: 'Maximum characters to include per child item. Default: 120.',
+        default: 120,
+      },
+    },
+  };
+
+  validate(args: any): args is { block_id?: string; document_id?: string; limit?: number; max_chars?: number } {
+    super.validate(args);
+    this.requireOneOf(args, ['block_id', 'document_id']);
+    this.forbidTogether(args, ['block_id', 'document_id']);
+    if (args.limit !== undefined) {
+      this.getNumberInRange(args.limit, 'limit', { min: 1, max: 200 });
+    }
+    return true;
+  }
+
+  async execute(
+    args: { block_id?: string; document_id?: string; limit?: number; max_chars?: number },
+    context: ExecutionContext
+  ): Promise<{ success: boolean; items: any[]; count: number; message: string }> {
+    const limit = args.limit ?? 50;
+    const maxChars = args.max_chars ?? 120;
+
+    if (args.block_id) {
+      const blocks = unwrapBlocks(await context.siyuan.block.getChildBlocks(args.block_id))
+        .slice(0, limit)
+        .map((block) => briefBlock(block, maxChars));
       return {
         success: true,
-        scope_used: 'global',
-        items,
-        count: items.length,
-        message: `Found ${items.length} matching block(s) using global search`,
+        items: blocks,
+        count: blocks.length,
+        message: `Listed ${blocks.length} child block(s)`,
       };
     }
 
-    // Scoped mode: use global search first, then filter candidates by ancestry.
-    // This avoids depending on getBlock(scopeId), which may fail even for valid block IDs.
-    const candidateLimit = Math.max(limit * 10, 50);
-    const results = await context.siyuan.block.searchBlocks(args.query, candidateLimit);
+    const tree = await context.siyuan.document.getDocumentTree(args.document_id!, 1);
+    const items = (tree ?? []).slice(0, limit).map((node: any) => ({
+      id: node.id,
+      type: 'd',
+      content_snippet: truncateText(node.name ?? node.title ?? node.hpath ?? '', maxChars),
+      has_children: Array.isArray(node.children) ? node.children.length > 0 : !!node.subFileCount,
+      child_count: Array.isArray(node.children) ? node.children.length : node.subFileCount,
+      path: node.hpath,
+    }));
+    return {
+      success: true,
+      items,
+      count: items.length,
+      message: `Listed ${items.length} child document(s)`,
+    };
+  }
+}
 
-    const matched: Array<{
-      id: string;
-      content_snippet: string;
-      parent_id?: string;
-      path?: string;
-    }> = [];
+/**
+ * Build a compact outline from a document or block tree
+ */
+export class GetDocumentOutlineHandler extends BaseToolHandler<
+  { document_id?: string; block_id?: string; max_headings?: number; max_depth?: number },
+  { success: boolean; items: Array<{ id?: string; text: string; level: number; parent_id?: string }>; count: number; truncated: boolean; message: string }
+> {
+  readonly name = 'get_document_outline';
+  readonly description =
+    'Return headings only for a document or block tree. Use this before reading large documents to jump to the right section with minimal tokens.';
+  readonly inputSchema: JSONSchema = {
+    type: 'object',
+    properties: {
+      document_id: {
+        type: 'string',
+        description: 'Document ID to outline using markdown headings.',
+      },
+      block_id: {
+        type: 'string',
+        description: 'Root block ID to outline using the local block tree.',
+      },
+      max_headings: {
+        type: 'number',
+        description: 'Maximum number of headings to return. Default: 200.',
+        default: 200,
+      },
+      max_depth: {
+        type: 'number',
+        description: 'Maximum heading depth to include. Default: 6.',
+        default: 6,
+      },
+    },
+  };
 
-    for (const raw of results ?? []) {
-      if (matched.length >= limit) break;
+  validate(args: any): args is { document_id?: string; block_id?: string; max_headings?: number; max_depth?: number } {
+    super.validate(args);
+    this.requireOneOf(args, ['document_id', 'block_id']);
+    this.forbidTogether(args, ['document_id', 'block_id']);
+    return true;
+  }
 
-      const blockId = raw.block_id;
-      if (!blockId) continue;
+  async execute(
+    args: { document_id?: string; block_id?: string; max_headings?: number; max_depth?: number },
+    context: ExecutionContext
+  ): Promise<{ success: boolean; items: Array<{ id?: string; text: string; level: number; parent_id?: string }>; count: number; truncated: boolean; message: string }> {
+    const maxHeadings = args.max_headings ?? 200;
+    const maxDepth = args.max_depth ?? 6;
 
-      // Fast metadata checks first
-      if (blockId === scopeId || raw.parent_id === scopeId || raw.root_id === scopeId) {
-        matched.push({
-          id: blockId,
-          content_snippet: raw.snippet ?? makeSnippet(blockText(raw), args.query),
-          parent_id: raw.parent_id,
-          path: raw.hpath,
-        });
-        continue;
-      }
+    let items: Array<{ id?: string; text: string; level: number; parent_id?: string }> = [];
 
-      // Fallback: inspect parent chain via block context
-      try {
-        const ctx = await context.siyuan.block.getBlockContext(blockId, {
-          parents: 20,
-          siblingsBefore: 0,
-          siblingsAfter: 0,
-          children: 0,
-        });
+    if (args.document_id) {
+      const content = await context.siyuan.getFileContent(args.document_id);
+      items = parseMarkdownHeadings(content, maxHeadings, maxDepth);
+    } else {
+      const tree = await context.siyuan.block.getBlockTreeSlice(args.block_id!, Math.max(maxDepth, 2));
+      const nodes = collectNodes(tree, []);
+const mappedItems: Array<{ id?: string; text: string; level: number; parent_id?: string }> = [];
 
-        const parents = Array.isArray(ctx?.parents) ? ctx.parents : [];
-        const parentIds = parents
-          .map((p: any) => unwrapBlock(p))
-          .filter((p: any) => !!p?.id)
-          .map((p: any) => p.id);
+for (const node of nodes) {
+  const block = unwrapBlock(node) ?? node;
+  const text = blockText(block);
+  if (!text) continue;
 
-        if (parentIds.includes(scopeId)) {
-          matched.push({
-            id: blockId,
-            content_snippet: raw.snippet ?? makeSnippet(blockText(raw), args.query),
-            parent_id: raw.parent_id,
-            path: raw.hpath,
-          });
-        }
-      } catch {
-        // Ignore per-result ancestry lookup failures and continue
-      }
+  const level =
+    typeof block?.subType === 'string' && /^h[1-6]$/.test(block.subType)
+      ? Number(block.subType.slice(1))
+      : typeof block?.level === 'number'
+        ? block.level
+        : typeof block?.headingLevel === 'number'
+          ? block.headingLevel
+          : 1;
+
+  mappedItems.push({
+    id: typeof block?.id === 'string' ? block.id : undefined,
+    text,
+    level,
+    parent_id: typeof block?.parent_id === 'string' ? block.parent_id : undefined,
+  });
+
+  if (mappedItems.length >= maxHeadings) break;
+}
+
+items = mappedItems;
     }
 
     return {
       success: true,
-      scope_used: 'subtree',
-      items: matched,
-      count: matched.length,
-      message:
-        matched.length > 0
-          ? `Found ${matched.length} matching block(s) within scoped subtree`
-          : `Found 0 matching block(s) within scoped subtree`,
+      items,
+      count: items.length,
+      truncated: items.length >= maxHeadings,
+      message: `Collected ${items.length} heading(s) for outline`,
+    };
+  }
+}
+
+/**
+ * Resolve a rough text reference to likely block candidates
+ */
+export class ResolveBlockReferenceHandler extends BaseToolHandler<
+  { query: string; root_id?: string; parent_id?: string; limit?: number },
+  { success: boolean; items: Array<{ id: string; content_snippet: string; parent_id?: string; path?: string }>; count: number; message: string }
+> {
+  readonly name = 'resolve_block_reference';
+  readonly description =
+    'Resolve a rough text reference to likely matching block candidates. Use this when the exact block ID is unknown but the target can be described.';
+  readonly inputSchema: JSONSchema = {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Rough text reference or search phrase for the target block.',
+      },
+      root_id: {
+        type: 'string',
+        description: 'Optional scope block ID used to narrow candidates.',
+      },
+      parent_id: {
+        type: 'string',
+        description: 'Optional parent block ID used to narrow candidates.',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum number of candidate blocks to return. Default: 5.',
+        default: 5,
+      },
+    },
+    required: ['query'],
+  };
+
+  validate(args: any): args is { query: string; root_id?: string; parent_id?: string; limit?: number } {
+    super.validate(args);
+    this.forbidTogether(args, ['root_id', 'parent_id']);
+    return true;
+  }
+
+  async execute(
+    args: { query: string; root_id?: string; parent_id?: string; limit?: number },
+    context: ExecutionContext
+  ): Promise<{ success: boolean; items: Array<{ id: string; content_snippet: string; parent_id?: string; path?: string }>; count: number; message: string }> {
+    const resolved = await resolveScopedSearchItems(context, args.query, {
+      root_id: args.root_id,
+      parent_id: args.parent_id,
+      limit: args.limit ?? 5,
+    });
+    return {
+      success: true,
+      items: resolved.items,
+      count: resolved.items.length,
+      message: `Resolved ${resolved.items.length} candidate block(s)`,
+    };
+  }
+}
+
+/**
+ * Find or create a heading and optionally append content beneath it
+ */
+export class UpsertSectionByHeadingHandler extends BaseToolHandler<
+  {
+    block_id: string;
+    heading: string;
+    content?: string;
+    create_if_missing?: boolean;
+    append_if_missing?: boolean;
+    exact_match?: boolean;
+    heading_level?: number;
+    dry_run?: boolean;
+  },
+  {
+    success: boolean;
+    heading_block_id?: string;
+    created_heading: boolean;
+    created_block: boolean;
+    block_id?: string;
+    message: string;
+    error_code?: 'HEADING_NOT_FOUND' | 'BLOCK_NOT_FOUND' | 'ALREADY_EXISTS';
+  }
+> {
+  readonly name = 'upsert_section_by_heading';
+  readonly description =
+    'Find a heading within a known tree, create it if missing, and optionally append content beneath it without duplication. Use this for recurring note sections like logs, decisions, or TODOs.';
+  readonly inputSchema: JSONSchema = {
+    type: 'object',
+    properties: {
+      block_id: {
+        type: 'string',
+        description: 'Root block ID where the heading should be found or created.',
+      },
+      heading: {
+        type: 'string',
+        description: 'Heading text to find or create.',
+      },
+      content: {
+        type: 'string',
+        description: 'Optional markdown content to append beneath the heading.',
+      },
+      create_if_missing: {
+        type: 'boolean',
+        description: 'If true, create the heading when it does not exist. Default: true.',
+        default: true,
+      },
+      append_if_missing: {
+        type: 'boolean',
+        description: 'If true, append the content only when a matching child block does not already exist. Default: true.',
+        default: true,
+      },
+      exact_match: {
+        type: 'boolean',
+        description: 'If true, use normalized exact matching when checking for duplicate child content. Default: true.',
+        default: true,
+      },
+      heading_level: {
+        type: 'number',
+        description: 'Markdown heading level to use when creating the heading. Default: 2.',
+        default: 2,
+      },
+      dry_run: {
+        type: 'boolean',
+        description: 'If true, report what would happen without changing content. Default: false.',
+        default: false,
+      },
+    },
+    required: ['block_id', 'heading'],
+  };
+
+  async execute(
+    args: {
+      block_id: string;
+      heading: string;
+      content?: string;
+      create_if_missing?: boolean;
+      append_if_missing?: boolean;
+      exact_match?: boolean;
+      heading_level?: number;
+      dry_run?: boolean;
+    },
+    context: ExecutionContext
+  ): Promise<{
+    success: boolean;
+    heading_block_id?: string;
+    created_heading: boolean;
+    created_block: boolean;
+    block_id?: string;
+    message: string;
+    error_code?: 'HEADING_NOT_FOUND' | 'BLOCK_NOT_FOUND' | 'ALREADY_EXISTS';
+  }> {
+    const root = unwrapBlock(await context.siyuan.block.getBlock(args.block_id));
+    if (!root) {
+      return {
+        success: false,
+        created_heading: false,
+        created_block: false,
+        message: `Root block not found: ${args.block_id}`,
+        error_code: 'BLOCK_NOT_FOUND',
+      };
+    }
+
+    const found = await context.siyuan.block.findHeadingInTree(args.block_id, args.heading, 8);
+    let headingBlock = Array.isArray(found) && found.length > 0 ? unwrapBlock(found[0]) ?? found[0] : null;
+    let createdHeading = false;
+
+    if (!headingBlock) {
+      if (!(args.create_if_missing ?? true)) {
+        return {
+          success: false,
+          created_heading: false,
+          created_block: false,
+          message: `Heading not found: ${args.heading}`,
+          error_code: 'HEADING_NOT_FOUND',
+        };
+      }
+
+      if (args.dry_run ?? false) {
+        return {
+          success: true,
+          created_heading: true,
+          created_block: !!args.content,
+          message: `Heading would be created: ${args.heading}`,
+        };
+      }
+
+      const level = Math.min(6, Math.max(1, args.heading_level ?? 2));
+      const headingMarkdown = `${'#'.repeat(level)} ${args.heading}`;
+      const headingBlockId = await context.siyuan.block.appendBlock(args.block_id, headingMarkdown);
+      headingBlock = unwrapBlock(await context.siyuan.block.getBlock(headingBlockId)) ?? { id: headingBlockId, parent_id: args.block_id, content: headingMarkdown, type: `h${level}` };
+      createdHeading = true;
+    }
+
+    if (!args.content) {
+      return {
+        success: true,
+        heading_block_id: headingBlock?.id,
+        created_heading: createdHeading,
+        created_block: false,
+        message: createdHeading ? 'Heading created' : 'Heading found',
+      };
+    }
+
+    const childBlocks = unwrapBlocks(await context.siyuan.block.getChildBlocks(headingBlock.id));
+    const existing = childBlocks.find((block) => matchesBlock(block, args.content!, args.exact_match ?? true));
+
+    if (existing && (args.append_if_missing ?? true)) {
+      return {
+        success: true,
+        heading_block_id: headingBlock.id,
+        created_heading: createdHeading,
+        created_block: false,
+        block_id: existing.id,
+        message: 'Matching section block already exists',
+        error_code: 'ALREADY_EXISTS',
+      };
+    }
+
+    if (args.dry_run ?? false) {
+      return {
+        success: true,
+        heading_block_id: headingBlock.id,
+        created_heading: createdHeading,
+        created_block: !existing,
+        block_id: existing?.id,
+        message: existing ? 'Matching section block already exists' : 'Section content would be appended',
+        ...(existing ? { error_code: 'ALREADY_EXISTS' as const } : {}),
+      };
+    }
+
+    const contentBlockId = existing?.id ?? await context.siyuan.block.appendBlock(headingBlock.id, args.content);
+    return {
+      success: true,
+      heading_block_id: headingBlock.id,
+      created_heading: createdHeading,
+      created_block: !existing,
+      block_id: contentBlockId,
+      message: existing ? 'Matching section block already exists' : 'Section content appended',
+      ...(existing ? { error_code: 'ALREADY_EXISTS' as const } : {}),
     };
   }
 }
