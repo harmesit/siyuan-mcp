@@ -122,6 +122,7 @@ export class AppendToDocumentHandler extends BaseToolHandler<
   'Append markdown content to the end of an existing note document. ' +
   'Use only when appending at full-document level is intended. ' +
   'Prefer block append tools when targeting a specific section or subtree.';
+
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
@@ -1641,15 +1642,15 @@ export class AppendBlockIfMissingHandler extends BaseToolHandler<
 
   readonly description =
     'Append a new child block only if matching content is not already present under the parent block. ' +
-    'Use for retry-safe appends, logs, and repeated automation runs where duplicate content must be avoided. ' +
-    'Returns ALREADY_EXISTS instead of creating a duplicate block.';
+    'Use for retry-safe appends, logs, repeated automation runs, or any flow where duplicate content must be avoided. ' +
+    'Parent must be a valid existing block. Returns ALREADY_EXISTS instead of creating a duplicate block.';
 
   readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
       parent_id: {
         type: 'string',
-        description: 'Parent block ID. The new child block will be appended here.',
+        description: 'Parent block ID. Must be an existing SiYuan block. The new child block will be appended here.',
       },
       content: {
         type: 'string',
@@ -1687,19 +1688,23 @@ export class AppendBlockIfMissingHandler extends BaseToolHandler<
     error_code?: 'BLOCK_NOT_FOUND' | 'ALREADY_EXISTS';
   }> {
     const parent = unwrapBlock(await context.siyuan.block.getBlock(args.parent_id));
-    if (!parent) {
+    if (!parent?.id) {
       return {
         success: false,
         created: false,
-        message: `Parent block not found: ${args.parent_id}`,
+        message: `Parent block not found: ${args.parent_id}. append_block_if_missing requires a valid existing block ID as parent_id.`,
         error_code: 'BLOCK_NOT_FOUND',
       };
     }
 
-    const children = unwrapBlocks(await context.siyuan.block.getChildBlocks(args.parent_id));
-    const existing = children.find((b: any) => matchesBlock(b, args.content, args.exact_match ?? true));
+    const childrenRaw = await context.siyuan.block.getChildBlocks(args.parent_id);
+    const children = unwrapBlocks(childrenRaw);
 
-    if (existing) {
+    const existing = children.find((b: any) =>
+      matchesBlock(b, args.content, args.exact_match ?? true)
+    );
+
+    if (existing?.id) {
       return {
         success: true,
         created: false,
@@ -1718,6 +1723,7 @@ export class AppendBlockIfMissingHandler extends BaseToolHandler<
     }
 
     const block_id = await context.siyuan.block.appendBlock(args.parent_id, args.content);
+
     return {
       success: true,
       created: true,
@@ -1726,7 +1732,6 @@ export class AppendBlockIfMissingHandler extends BaseToolHandler<
     };
   }
 }
-
 /**
  * Scoped block search with optional debug output
  */
