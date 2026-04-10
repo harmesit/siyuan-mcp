@@ -1,17 +1,19 @@
 import { BaseToolHandler } from './mcp-server/handlers/base.js';
 import { makeContext } from './test-utils.js';
+import type { JSONSchema } from './mcp-server/core/types.js';
 
 class DemoHandler extends BaseToolHandler<{ name: string; count?: number }, { ok: true }> {
   readonly name = 'demo';
   readonly description = 'demo';
-  readonly inputSchema = {
+
+  readonly inputSchema: JSONSchema = {
     type: 'object',
     properties: {
       name: { type: 'string' },
       count: { type: 'number' },
     },
     required: ['name'],
-  } as const;
+  };
 
   async execute(): Promise<{ ok: true }> {
     return { ok: true };

@@ -59,8 +59,20 @@ export class SiyuanBlockApi {
     if (response.code !== 0) {
       throw new Error(`Failed to get block: ${response.msg}`);
     }
+    const normalized = this.normalizeResult(response);
 
-    return this.normalizeResult(response);
+    // SiYuan's /api/block/getBlockInfo metadata may omit the requested block id
+    // even when the block exists. Several higher-level handlers rely on `id`
+    // being present for existence checks and block unwrapping, so preserve the
+    // requested id when the API response does not include one.
+    if (normalized && typeof normalized === 'object' && !Array.isArray(normalized)) {
+      return {
+        ...normalized,
+        id: normalized.id ?? blockId,
+      };
+    }
+
+    return normalized;
   }
 
   /**

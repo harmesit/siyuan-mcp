@@ -17,18 +17,18 @@ export abstract class BaseToolHandler<TArgs = any, TResult = any>
    * 默认的参数验证（子类可覆盖）
    */
   validate(args: any): args is TArgs {
-    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
       this.fail('INVALID_ARGUMENT', 'Arguments must be an object');
     }
-
+  
     if (this.inputSchema.required) {
       for (const field of this.inputSchema.required) {
         if (!(field in args)) {
-          this.fail('INVALID_ARGUMENT', `Missing required field: ${field}`);
+          this.fail('MISSING_REQUIRED', `Missing required field: ${field}`);
         }
       }
     }
-
+  
     return true;
   }
 
@@ -39,14 +39,20 @@ export abstract class BaseToolHandler<TArgs = any, TResult = any>
   }
 
   protected requireOneOf(args: Record<string, unknown>, fields: string[]): void {
-    const present = fields.filter((field) => args[field] !== undefined && args[field] !== null);
+    const present = fields.filter(
+      (field) => args[field] !== undefined && args[field] !== null
+    );
+
     if (present.length === 0) {
       this.fail('INVALID_ARGUMENT', `One of [${fields.join(', ')}] is required`);
     }
   }
 
   protected forbidTogether(args: Record<string, unknown>, fields: string[]): void {
-    const present = fields.filter((field) => args[field] !== undefined && args[field] !== null);
+    const present = fields.filter(
+      (field) => args[field] !== undefined && args[field] !== null
+    );
+
     if (present.length > 1) {
       this.fail('INVALID_SCOPE', `Fields are mutually exclusive: ${present.join(', ')}`);
     }
@@ -60,7 +66,9 @@ export abstract class BaseToolHandler<TArgs = any, TResult = any>
     const { min, max, defaultValue } = options;
 
     if (value === undefined || value === null) {
-      if (defaultValue !== undefined) return defaultValue;
+      if (defaultValue !== undefined) {
+        return defaultValue;
+      }
       this.fail('INVALID_ARGUMENT', `Missing numeric field: ${field}`);
     }
 
@@ -84,6 +92,7 @@ export abstract class BaseToolHandler<TArgs = any, TResult = any>
    */
   async safeExecute(args: any, context: ExecutionContext): Promise<TResult> {
     context.logger.debug(`Executing tool: ${this.name}`, args);
+
     try {
       this.validate(args);
       const result = await this.execute(args, context);
